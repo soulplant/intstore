@@ -30,29 +30,6 @@ class ResourceHost
   close: ->
     @resourceManager.close @
 
-class IntStoreResourceHost extends ResourceHost
-  constructor: (@resourceManager) ->
-    super 'IntStore', @resourceManager
-    @value = 0
-
-  handleSet: (msg) ->
-    @value = msg.value
-
-  handleGet: (msg) ->
-    @send {
-      name: 'got'
-      @value
-    }
-
-  receive: (msg) ->
-    return if super
-    switch msg.name
-      when 'set' then @handleSet msg
-      when 'get' then @handleGet msg
-
-  close: ->
-    # TODO Add an api for this.
-
 class RootResourceHost extends ResourceHost
   constructor: (@resourceManager) ->
     super 'Root', @resourceManager
@@ -98,6 +75,29 @@ class ResourceManager
 
   getResourceHandles: ->
     {id, name: r.name} for id, r of @resources
+
+class IntStoreResourceHost extends ResourceHost
+  constructor: (@resourceManager) ->
+    super 'IntStore', @resourceManager
+    @value = 0
+
+  handleSet: (msg) ->
+    @value = msg.value
+
+  handleGet: (msg) ->
+    @send {
+      name: 'got'
+      @value
+    }
+
+  receive: (msg) ->
+    return if super
+    switch msg.name
+      when 'set' then @handleSet msg
+      when 'get' then @handleGet msg
+
+  close: ->
+    # TODO Add an api for suppressing close.
 
 # Renderer.
 class ResourceManagerClient
@@ -208,7 +208,7 @@ class RootResource extends Resource
 class BrowserProcess
   constructor: ->
     @rm = new ResourceManager
-    browserPipe = new Pipe '>>', @rm
+    browserPipe = new Pipe '<<', @rm
     @rrh = new RootResourceHost @rm
     @rrh.addHostFactory 'IntStore', (rm) ->
       new IntStoreResourceHost rm
@@ -227,7 +227,7 @@ class RendererProcess
     @rr = new RootResource @rmc
     @rr.registerFactory 'IntStore', (id, rmc) ->
       new IntStoreResource id, rmc
-    rendererPipe = new Pipe '<<', @rmc
+    rendererPipe = new Pipe '>>', @rmc
 
   createAndUseIntStore: ->
     @rr.create 'IntStore', (intStore) ->
