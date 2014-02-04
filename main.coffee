@@ -13,7 +13,7 @@ class Pipe
 
 # Browser.
 class ResourceHost
-  constructor: (@resourceManager) ->
+  constructor: (@name, @resourceManager) ->
     @id = @resourceManager.register @
 
   send: (msg) ->
@@ -22,14 +22,17 @@ class ResourceHost
 
   receive: (msg) ->
     switch msg.name
-      when 'close' then @resourceManager.close @
+      when 'close' then @close()
       else
         return false
     true
 
+  close: ->
+    @resourceManager.close @
+
 class IntStoreResourceHost extends ResourceHost
   constructor: (@resourceManager) ->
-    super
+    super 'IntStore', @resourceManager
     @value = 0
 
   handleSet: (msg) ->
@@ -47,9 +50,12 @@ class IntStoreResourceHost extends ResourceHost
       when 'set' then @handleSet msg
       when 'get' then @handleGet msg
 
+  close: ->
+    # TODO Add an api for this.
+
 class RootResourceHost extends ResourceHost
   constructor: (@resourceManager) ->
-    super
+    super 'Root', @resourceManager
     @factories = {}
 
   addHostFactory: (name, factory) ->
@@ -68,6 +74,12 @@ class RootResourceHost extends ResourceHost
     switch msg.name
       when 'create' then @create msg
 
+  restoreResources: ->
+    @send {
+      name: 'RestoreResources'
+      resources: @resourceManager.getResourceHandles()
+    }
+
 class ResourceManager
   constructor: ->
     @lastId = 0
@@ -84,10 +96,17 @@ class ResourceManager
   close: (resource) ->
     delete @resources[resource.id]
 
+  getResourceHandles: ->
+    {id, name: r.name} for id, r of @resources
+
 # Renderer.
 class ResourceManagerClient
   constructor: ->
     @resources = {}
+    @onRestore = ->
+
+  fireOnRestore: ->
+    @onRestore @resources
 
   register: (id, resource) ->
     # console.log 'registering', id, 'in ResourceManagerClient'
@@ -174,9 +193,16 @@ class RootResource extends Resource
     resource = @factories[p.type](msg.createdId, @rmc)
     p.callback resource
 
+  onRestoreResources: (msg) ->
+    for id, resource of msg.resources
+      @factories[resource.name](resource.id, @rmc)
+    @rmc.fireOnRestore()
+
   receive: (msg) ->
     switch msg.name
       when 'OnCreate' then @onCreate msg
+      when 'RestoreResources' then @onRestoreResources msg
+      else console.log 'cant handle', msg.name
 
 # Non-system code.
 class BrowserProcess
@@ -187,9 +213,17 @@ class BrowserProcess
     @rrh.addHostFactory 'IntStore', (rm) ->
       new IntStoreResourceHost rm
 
+  restore: ->
+    @rrh.restoreResources()
+
+rememberedId = null
+
 class RendererProcess
   constructor: ->
     @rmc = new ResourceManagerClient
+    @rmc.onRestore = (resources) ->
+      resources[rememberedId].get (x) ->
+        console.log 'the value, after restore, is...', x
     @rr = new RootResource @rmc
     @rr.registerFactory 'IntStore', (id, rmc) ->
       new IntStoreResource id, rmc
@@ -197,6 +231,7 @@ class RendererProcess
 
   createAndUseIntStore: ->
     @rr.create 'IntStore', (intStore) ->
+      rememberedId = intStore.id
       intStore.set 10
       intStore.get (x) ->
         console.log x
@@ -211,4 +246,8 @@ rp = new RendererProcess
 rp.createAndUseIntStore()
 rp.shutdown()
 
-console.log bp.rm
+rp = new RendererProcess
+bp.restore()
+
+# console.log 'rm', bp.rm
+# console.log 'rmc', rp.rmc
