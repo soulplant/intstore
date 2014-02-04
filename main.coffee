@@ -20,6 +20,13 @@ class ResourceHost
     msg.target = @id
     rendererPipe.send msg
 
+  receive: (msg) ->
+    switch msg.name
+      when 'close' then @resourceManager.close @
+      else
+        return false
+    true
+
 class IntStoreResourceHost extends ResourceHost
   constructor: (@resourceManager) ->
     super
@@ -35,6 +42,7 @@ class IntStoreResourceHost extends ResourceHost
     }
 
   receive: (msg) ->
+    return if super
     switch msg.name
       when 'set' then @handleSet msg
       when 'get' then @handleGet msg
@@ -56,21 +64,25 @@ class RootResourceHost extends ResourceHost
     }
 
   receive: (msg) ->
+    return if super
     switch msg.name
       when 'create' then @create msg
 
 class ResourceManager
   constructor: ->
-    @resources = []
+    @lastId = 0
+    @resources = {}
 
   register: (resource) ->
-    id = @resources.length
-    @resources.push resource
+    id = @lastId++
+    @resources[id] = resource
     id
 
   receive: (msg) ->
     @resources[msg.target].receive msg
 
+  close: (resource) ->
+    delete @resources[resource.id]
 
 # Renderer.
 class ResourceManagerClient
@@ -86,6 +98,14 @@ class ResourceManagerClient
     # console.log {@resources}
     @resources[msg.target].receive msg
 
+  flush: ->
+    for id, r of @resources
+      r.flush()
+
+  close: ->
+    for id, r of @resources
+      r.close()
+
 class Resource
   constructor: (@id, @rmc) ->
     @rmc.register @id, @
@@ -95,6 +115,9 @@ class Resource
     browserPipe.send msg
 
   receive: (msg) ->
+  flush: ->
+  close: ->
+    @send {name: 'close'}
 
 class IntStoreResource extends Resource
   constructor: (id, rmc) ->
@@ -172,12 +195,20 @@ class RendererProcess
       new IntStoreResource id, rmc
     rendererPipe = new Pipe '<<', @rmc
 
+  createAndUseIntStore: ->
     @rr.create 'IntStore', (intStore) ->
       intStore.set 10
       intStore.get (x) ->
         console.log x
 
+  shutdown: ->
+    @rmc.flush()
+    @rmc.close()
 
 bp = new BrowserProcess
 rp = new RendererProcess
 
+rp.createAndUseIntStore()
+rp.shutdown()
+
+console.log bp.rm
